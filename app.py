@@ -3,204 +3,22 @@ import httpx
 import fitz  # PyMuPDF
 import tempfile
 import os
-import asyncio
+import time
 from PIL import Image
 import io
-import base64
 
-# ── Page config ──────────────────────────────────────────────────────────────
+# ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="DocMind — AI Document Q&A",
     page_icon="📄",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
-# ── Custom CSS ────────────────────────────────────────────────────────────────
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+# ── HF Token (hardcoded) ──────────────────────────────────────────────────────
+HF_TOKEN = "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"   # ← Replace with your actual token
 
-html, body, [class*="css"] {
-    font-family: 'Outfit', sans-serif !important;
-}
-
-/* Dark background */
-.stApp {
-    background-color: #0a0c0a;
-    color: #e2e8e2;
-}
-
-/* Sidebar */
-[data-testid="stSidebar"] {
-    background-color: #101410 !important;
-    border-right: 1px solid rgba(255,255,255,0.07);
-}
-
-/* Header */
-.doc-header {
-    background: linear-gradient(135deg, #101410, #141914);
-    border: 1px solid rgba(74,222,128,0.15);
-    border-radius: 16px;
-    padding: 28px 32px;
-    margin-bottom: 24px;
-    text-align: center;
-}
-.doc-header h1 {
-    color: #4ade80;
-    font-size: 2.8rem;
-    font-weight: 800;
-    margin: 0;
-    letter-spacing: -1px;
-}
-.doc-header p {
-    color: rgba(226,232,226,0.55);
-    font-size: 1rem;
-    margin-top: 6px;
-}
-
-/* Cards */
-.info-card {
-    background: #101410;
-    border: 1px solid rgba(74,222,128,0.12);
-    border-left: 4px solid #4ade80;
-    border-radius: 12px;
-    padding: 16px 20px;
-    margin-bottom: 12px;
-}
-
-/* Chat messages */
-.user-msg {
-    background: linear-gradient(135deg, #4ade80, #22c55e);
-    color: #0a0c0a;
-    border-radius: 16px 16px 4px 16px;
-    padding: 12px 18px;
-    margin: 8px 0;
-    font-weight: 500;
-    max-width: 80%;
-    margin-left: auto;
-    font-size: 0.95rem;
-}
-.ai-msg {
-    background: #141914;
-    border: 1px solid rgba(255,255,255,0.07);
-    color: #e2e8e2;
-    border-radius: 16px 16px 16px 4px;
-    padding: 12px 18px;
-    margin: 8px 0;
-    max-width: 85%;
-    font-size: 0.95rem;
-    line-height: 1.7;
-    white-space: pre-wrap;
-}
-.ai-label {
-    color: #4ade80;
-    font-size: 0.7rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 4px;
-}
-.msg-time {
-    color: rgba(255,255,255,0.2);
-    font-size: 0.7rem;
-    margin-bottom: 2px;
-    text-align: right;
-}
-
-/* Suggestion chips */
-.sugg-container {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin: 12px 0;
-}
-
-/* File info */
-.file-info {
-    background: rgba(74,222,128,0.05);
-    border: 1px solid rgba(74,222,128,0.15);
-    border-radius: 10px;
-    padding: 12px 16px;
-    margin-bottom: 12px;
-    font-size: 0.85rem;
-}
-
-/* Input styling */
-.stTextInput > div > div > input {
-    background: #141914 !important;
-    border: 1.5px solid rgba(255,255,255,0.1) !important;
-    border-radius: 10px !important;
-    color: #e2e8e2 !important;
-    font-family: 'Outfit', sans-serif !important;
-}
-.stTextInput > div > div > input:focus {
-    border-color: rgba(74,222,128,0.5) !important;
-    box-shadow: 0 0 0 2px rgba(74,222,128,0.1) !important;
-}
-
-/* Buttons */
-.stButton > button {
-    background: linear-gradient(135deg, #4ade80, #22c55e) !important;
-    color: #0a0c0a !important;
-    font-weight: 700 !important;
-    border: none !important;
-    border-radius: 10px !important;
-    font-family: 'Outfit', sans-serif !important;
-    transition: all 0.2s !important;
-}
-.stButton > button:hover {
-    transform: translateY(-1px) !important;
-    box-shadow: 0 4px 16px rgba(74,222,128,0.3) !important;
-}
-
-/* Secondary button */
-.secondary-btn > button {
-    background: rgba(255,255,255,0.05) !important;
-    color: rgba(226,232,226,0.6) !important;
-    border: 1px solid rgba(255,255,255,0.1) !important;
-}
-
-/* File uploader */
-[data-testid="stFileUploader"] {
-    background: #101410 !important;
-    border: 2px dashed rgba(255,255,255,0.1) !important;
-    border-radius: 16px !important;
-}
-[data-testid="stFileUploader"]:hover {
-    border-color: rgba(74,222,128,0.4) !important;
-}
-
-/* Divider */
-hr {
-    border-color: rgba(255,255,255,0.07) !important;
-}
-
-/* Spinner */
-.stSpinner > div {
-    border-top-color: #4ade80 !important;
-}
-
-/* Success/error */
-.stSuccess {
-    background: rgba(74,222,128,0.1) !important;
-    border: 1px solid rgba(74,222,128,0.2) !important;
-    color: #4ade80 !important;
-}
-.stError {
-    background: rgba(248,113,113,0.1) !important;
-    border: 1px solid rgba(248,113,113,0.2) !important;
-}
-
-/* Hide streamlit branding */
-#MainMenu, footer, header { visibility: hidden; }
-.block-container { padding-top: 1.5rem !important; }
-</style>
-""", unsafe_allow_html=True)
-
-# ── Config ────────────────────────────────────────────────────────────────────
-HF_TOKEN = os.getenv("HF_TOKEN", st.secrets.get("HF_TOKEN", "") if hasattr(st, "secrets") else "")
-
+# ── API config ────────────────────────────────────────────────────────────────
 CHAT_URL   = "https://router.huggingface.co/v1/chat/completions"
 CHAT_MODEL = "meta-llama/Llama-3.1-8B-Instruct:cerebras"
 CHAT_FALLBACKS = [
@@ -220,7 +38,7 @@ SUGGESTIONS = {
     "pdf": [
         "📋 What is the main topic?",
         "🔍 What are the key findings?",
-        "📝 Summarize briefly",
+        "📝 Summarize this document briefly",
         "❓ What problem does this address?",
         "📌 List the most important points",
     ],
@@ -232,6 +50,188 @@ SUGGESTIONS = {
         "💡 What is the overall theme or mood?",
     ],
 }
+
+# ── CSS ───────────────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Outfit', sans-serif !important;
+}
+
+.stApp {
+    background-color: #0a0c0a;
+    color: #e2e8e2;
+}
+
+/* Hide sidebar */
+[data-testid="stSidebar"] { display: none !important; }
+[data-testid="collapsedControl"] { display: none !important; }
+
+/* Header */
+.doc-header {
+    background: linear-gradient(135deg, #101410, #141914);
+    border: 1px solid rgba(74,222,128,0.15);
+    border-radius: 20px;
+    padding: 36px 40px 28px;
+    margin-bottom: 32px;
+    text-align: center;
+}
+.doc-header h1 {
+    color: #4ade80;
+    font-size: 3rem;
+    font-weight: 800;
+    margin: 0 0 8px 0;
+    letter-spacing: -1.5px;
+}
+.doc-header p {
+    color: rgba(226,232,226,0.45);
+    font-size: 1rem;
+    margin: 0;
+}
+
+/* Feature cards */
+.feature-row {
+    display: flex;
+    gap: 16px;
+    max-width: 800px;
+    margin: 0 auto 28px auto;
+}
+.feat-card {
+    flex: 1;
+    background: #101410;
+    border: 1px solid rgba(74,222,128,0.1);
+    border-radius: 14px;
+    padding: 20px;
+    text-align: center;
+}
+.feat-card .icon  { font-size: 1.8rem; margin-bottom: 8px; }
+.feat-card .title { color: #4ade80; font-weight: 700; font-size: 0.95rem; margin-bottom: 4px; }
+.feat-card .desc  { color: rgba(226,232,226,0.4); font-size: 0.8rem; line-height: 1.5; }
+
+/* Upload zone */
+.upload-zone {
+    background: #101410;
+    border: 2px dashed rgba(74,222,128,0.25);
+    border-radius: 24px;
+    padding: 40px 40px 20px;
+    text-align: center;
+    margin: 0 auto 32px auto;
+}
+.upload-zone:hover { border-color: rgba(74,222,128,0.45); }
+.upload-icon  { font-size: 3.5rem; display: block; margin-bottom: 12px; }
+.upload-title { color: #e2e8e2; font-size: 1.3rem; font-weight: 700; margin-bottom: 6px; }
+.upload-sub   { color: rgba(226,232,226,0.35); font-size: 0.88rem; margin-bottom: 20px; }
+
+/* File uploader widget - blend into upload zone */
+[data-testid="stFileUploader"] { background: transparent !important; border: none !important; }
+[data-testid="stFileUploader"] section { background: transparent !important; border: none !important; padding: 0 !important; }
+[data-testid="stFileUploader"] label { display: none !important; }
+
+/* File info bar */
+.file-bar {
+    background: rgba(74,222,128,0.07);
+    border: 1px solid rgba(74,222,128,0.18);
+    border-radius: 12px;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+.file-bar-name { color: #4ade80; font-weight: 700; }
+.file-bar-meta { color: rgba(226,232,226,0.4); font-size: 0.82rem; }
+
+/* Chat messages */
+.user-msg {
+    background: linear-gradient(135deg, #4ade80, #22c55e);
+    color: #0a0c0a;
+    border-radius: 18px 18px 4px 18px;
+    padding: 12px 18px;
+    font-weight: 600;
+    max-width: 72%;
+    margin-left: auto;
+    font-size: 0.95rem;
+}
+.ai-label {
+    color: #4ade80;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    margin-bottom: 4px;
+}
+.ai-msg {
+    background: #141914;
+    border: 1px solid rgba(255,255,255,0.07);
+    color: #e2e8e2;
+    border-radius: 18px 18px 18px 4px;
+    padding: 14px 18px;
+    max-width: 80%;
+    font-size: 0.95rem;
+    line-height: 1.75;
+    white-space: pre-wrap;
+}
+
+/* All buttons default: chip style */
+.stButton > button {
+    background: rgba(74,222,128,0.08) !important;
+    color: rgba(226,232,226,0.7) !important;
+    border: 1px solid rgba(74,222,128,0.2) !important;
+    border-radius: 20px !important;
+    font-size: 0.8rem !important;
+    font-family: 'Outfit', sans-serif !important;
+    transition: all 0.2s !important;
+}
+.stButton > button:hover {
+    background: rgba(74,222,128,0.15) !important;
+    color: #e2e8e2 !important;
+}
+
+/* Send button */
+.send-btn > button {
+    background: linear-gradient(135deg, #4ade80, #22c55e) !important;
+    color: #0a0c0a !important;
+    font-weight: 700 !important;
+    border: none !important;
+    border-radius: 10px !important;
+    font-size: 0.9rem !important;
+}
+.send-btn > button:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 16px rgba(74,222,128,0.35) !important;
+}
+
+/* New file button */
+.newfile-btn > button {
+    background: rgba(248,113,113,0.09) !important;
+    color: #f87171 !important;
+    border: 1px solid rgba(248,113,113,0.25) !important;
+    border-radius: 10px !important;
+    font-size: 0.85rem !important;
+}
+
+/* Text input */
+.stTextInput > div > div > input {
+    background: #141914 !important;
+    border: 1.5px solid rgba(255,255,255,0.1) !important;
+    border-radius: 12px !important;
+    color: #e2e8e2 !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-size: 0.95rem !important;
+}
+.stTextInput > div > div > input:focus {
+    border-color: rgba(74,222,128,0.45) !important;
+    box-shadow: 0 0 0 2px rgba(74,222,128,0.08) !important;
+}
+
+hr { border-color: rgba(255,255,255,0.06) !important; }
+.stSpinner > div { border-top-color: #4ade80 !important; }
+#MainMenu, footer, header { visibility: hidden; }
+.block-container { padding-top: 2rem !important; max-width: 960px !important; }
+</style>
+""", unsafe_allow_html=True)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def extract_pdf_text(data: bytes) -> str:
@@ -269,7 +269,7 @@ def call_chat(system: str, user: str) -> str:
                     "temperature": 0.4,
                     "stream": False,
                 })
-                if len(r.content) == 0 or r.status_code in (503, 404):
+                if r.status_code in (503, 404) or len(r.content) == 0:
                     last_error = f"{model} unavailable"
                     continue
                 if not r.is_success:
@@ -278,7 +278,6 @@ def call_chat(system: str, user: str) -> str:
                 return r.json()["choices"][0]["message"]["content"].strip()
             except Exception as e:
                 last_error = str(e)
-                continue
     raise ValueError(f"All models failed. Last: {last_error}")
 
 def call_qa(question: str, context: str) -> dict:
@@ -288,7 +287,7 @@ def call_qa(question: str, context: str) -> dict:
                 "inputs": {"question": question, "context": context}
             })
             if r.status_code == 503:
-                import time; time.sleep(10)
+                time.sleep(10)
                 continue
             if r.is_success:
                 return r.json()
@@ -300,7 +299,7 @@ def call_vision(image_bytes: bytes, mime: str) -> str:
         for _ in range(3):
             r = client.post(VISION_URL, headers=headers, content=image_bytes)
             if r.status_code == 503:
-                import time; time.sleep(10)
+                time.sleep(10)
                 continue
             if r.is_success:
                 data = r.json()
@@ -310,8 +309,8 @@ def call_vision(image_bytes: bytes, mime: str) -> str:
     return "an uploaded image"
 
 def answer_question(file_bytes: bytes, file_type: str, mime: str, question: str) -> str:
-    if not HF_TOKEN:
-        return "⚠️ HF_TOKEN is not set. Please add it in your environment or Streamlit secrets."
+    if not HF_TOKEN or HF_TOKEN == "your_huggingface_token_here":
+        return "⚠️ Please replace `your_huggingface_token_here` in app.py with your actual Hugging Face token."
 
     if file_type == "image":
         caption = call_vision(file_bytes, mime)
@@ -319,10 +318,10 @@ def answer_question(file_bytes: bytes, file_type: str, mime: str, question: str)
             system="You are a helpful image analyst. Answer questions about images clearly and in detail.",
             user=f'The image shows: "{caption}"\n\nQuestion: {question}\n\nAnswer helpfully and in detail.',
         )
-    else:  # PDF
+    else:
         doc_text = extract_pdf_text(file_bytes)
         if not doc_text or len(doc_text) < 50:
-            return "❌ No text found in PDF. It may be a scanned image-only file."
+            return "❌ No readable text found. This PDF may be a scanned image-only file."
 
         chunks = chunk_text(doc_text)
         best_ans, best_score = "", -1.0
@@ -350,119 +349,22 @@ def answer_question(file_bytes: bytes, file_type: str, mime: str, question: str)
                 f"Answer clearly and accurately. If the answer is not in the document, say so."
             )
         return call_chat(
-            system="You are an expert document analyst. Answer questions about documents precisely. Use bullet points where helpful.",
+            system="You are an expert document analyst. Answer questions precisely. Use bullet points where helpful.",
             user=user_msg,
         )
 
 # ── Session state ─────────────────────────────────────────────────────────────
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "uploaded_file" not in st.session_state:
-    st.session_state.uploaded_file = None
-if "file_type" not in st.session_state:
-    st.session_state.file_type = None
-if "file_bytes" not in st.session_state:
-    st.session_state.file_bytes = None
-if "file_mime" not in st.session_state:
-    st.session_state.file_mime = None
+for key, default in [
+    ("messages", []),
+    ("uploaded_file", None),
+    ("file_type", None),
+    ("file_bytes", None),
+    ("file_mime", None),
+]:
+    if key not in st.session_state:
+        st.session_state[key] = default
 
-# ── SIDEBAR ───────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("""
-    <div style='text-align:center; padding: 12px 0 20px 0;'>
-        <div style='background: linear-gradient(135deg, #4ade80, #16a34a);
-                    border-radius: 12px; width: 48px; height: 48px;
-                    display: flex; align-items: center; justify-content: center;
-                    margin: 0 auto 10px auto; font-size: 24px;'>📄</div>
-        <div style='font-size: 1.4rem; font-weight: 800; color: #4ade80; letter-spacing: -0.5px;'>DocMind</div>
-        <div style='color: rgba(226,232,226,0.4); font-size: 0.75rem; margin-top: 2px;'>AI Document Q&A</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # File uploader
-    st.markdown("<div style='color: rgba(226,232,226,0.5); font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;'>Upload File</div>", unsafe_allow_html=True)
-
-    uploaded = st.file_uploader(
-        "Upload PDF or Image",
-        type=["pdf", "png", "jpg", "jpeg", "webp"],
-        label_visibility="collapsed",
-    )
-
-    if uploaded:
-        mime = uploaded.type
-        if mime == "application/pdf":
-            ftype = "pdf"
-        elif mime.startswith("image/"):
-            ftype = "image"
-        else:
-            ftype = None
-
-        if ftype and (st.session_state.uploaded_file != uploaded.name):
-            st.session_state.uploaded_file = uploaded.name
-            st.session_state.file_type = ftype
-            st.session_state.file_bytes = uploaded.read()
-            st.session_state.file_mime = mime
-            st.session_state.messages = []
-
-    # File info
-    if st.session_state.uploaded_file:
-        size_kb = round(len(st.session_state.file_bytes) / 1024, 1)
-        st.markdown(f"""
-        <div class='file-info'>
-            <div style='color: #4ade80; font-weight: 700; margin-bottom: 4px;'>
-                {'📄' if st.session_state.file_type == 'pdf' else '🖼️'} {st.session_state.uploaded_file}
-            </div>
-            <div style='color: rgba(226,232,226,0.4);'>
-                {st.session_state.file_type.upper()} &nbsp;·&nbsp; {size_kb} KB &nbsp;·&nbsp; {len(st.session_state.messages)//2} Q&A
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Image preview
-        if st.session_state.file_type == "image":
-            img = Image.open(io.BytesIO(st.session_state.file_bytes))
-            st.image(img, use_container_width=True)
-
-        st.markdown("---")
-
-        # Suggestions
-        st.markdown("<div style='color: rgba(226,232,226,0.3); font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;'>Suggestions</div>", unsafe_allow_html=True)
-
-        for sugg in SUGGESTIONS.get(st.session_state.file_type, []):
-            if st.button(sugg, key=f"sugg_{sugg}", use_container_width=True):
-                st.session_state["pending_question"] = sugg
-                st.rerun()
-
-        st.markdown("---")
-
-        # Clear button
-        if st.button("🗑️ New File", use_container_width=True):
-            st.session_state.messages = []
-            st.session_state.uploaded_file = None
-            st.session_state.file_type = None
-            st.session_state.file_bytes = None
-            st.session_state.file_mime = None
-            st.rerun()
-
-    else:
-        st.markdown("""
-        <div style='color: rgba(226,232,226,0.25); font-size: 0.85rem; text-align: center; padding: 20px 0; line-height: 1.7;'>
-            Upload a PDF or image<br>to get started
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Token status
-    st.markdown("---")
-    if HF_TOKEN:
-        st.markdown("<div style='text-align:center; color: #4ade80; font-size: 0.75rem;'>🟢 HF Token Connected</div>", unsafe_allow_html=True)
-    else:
-        st.markdown("<div style='text-align:center; color: #f87171; font-size: 0.75rem;'>🔴 HF Token Missing</div>", unsafe_allow_html=True)
-
-# ── MAIN AREA ─────────────────────────────────────────────────────────────────
-
-# Header
+# ── HEADER ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class='doc-header'>
     <h1>📄 DocMind</h1>
@@ -470,87 +372,157 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# STATE A: No file → centered upload zone
+# ═══════════════════════════════════════════════════════════════════════════════
 if not st.session_state.uploaded_file:
-    # Landing state
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown("""
-        <div class='info-card'>
-            <div style='font-size: 1.8rem; margin-bottom: 8px;'>📄</div>
-            <div style='font-weight: 700; color: #4ade80; margin-bottom: 4px;'>PDF Support</div>
-            <div style='color: rgba(226,232,226,0.5); font-size: 0.85rem;'>Upload any PDF and ask questions about its content using AI</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with col2:
-        st.markdown("""
-        <div class='info-card'>
-            <div style='font-size: 1.8rem; margin-bottom: 8px;'>🖼️</div>
-            <div style='font-weight: 700; color: #4ade80; margin-bottom: 4px;'>Image Analysis</div>
-            <div style='color: rgba(226,232,226,0.5); font-size: 0.85rem;'>Upload photos or screenshots and get AI-powered visual analysis</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with col3:
-        st.markdown("""
-        <div class='info-card'>
-            <div style='font-size: 1.8rem; margin-bottom: 8px;'>⚡</div>
-            <div style='font-weight: 700; color: #4ade80; margin-bottom: 4px;'>Instant Answers</div>
-            <div style='color: rgba(226,232,226,0.5); font-size: 0.85rem;'>Powered by Llama 3.1, RoBERTa & BLIP via Hugging Face</div>
-        </div>
-        """, unsafe_allow_html=True)
 
+    # Feature cards
     st.markdown("""
-    <div style='text-align: center; padding: 40px 0; color: rgba(226,232,226,0.2); font-size: 0.9rem;'>
-        ← Upload a file from the sidebar to begin
+    <div class='feature-row'>
+        <div class='feat-card'>
+            <div class='icon'>📄</div>
+            <div class='title'>PDF Q&A</div>
+            <div class='desc'>Upload any PDF and ask questions about its content using AI</div>
+        </div>
+        <div class='feat-card'>
+            <div class='icon'>🖼️</div>
+            <div class='title'>Image Analysis</div>
+            <div class='desc'>Upload photos or screenshots for AI-powered visual analysis</div>
+        </div>
+        <div class='feat-card'>
+            <div class='icon'>⚡</div>
+            <div class='title'>Instant Answers</div>
+            <div class='desc'>Llama 3.1 · RoBERTa · BLIP via Hugging Face free inference</div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
+    # Centered upload — 3-column layout to constrain width
+    _, col_mid, _ = st.columns([1, 2, 1])
+    with col_mid:
+        st.markdown("""
+        <div class='upload-zone'>
+            <span class='upload-icon'>⬆️</span>
+            <div class='upload-title'>Drop your file here</div>
+            <div class='upload-sub'>Supports PDF · PNG · JPG · WEBP</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        uploaded = st.file_uploader(
+            "Upload file",
+            type=["pdf", "png", "jpg", "jpeg", "webp"],
+            label_visibility="collapsed",
+        )
+
+        if uploaded:
+            mime = uploaded.type
+            ftype = "pdf" if mime == "application/pdf" else ("image" if mime.startswith("image/") else None)
+            if ftype:
+                st.session_state.uploaded_file = uploaded.name
+                st.session_state.file_type = ftype
+                st.session_state.file_bytes = uploaded.read()
+                st.session_state.file_mime = mime
+                st.session_state.messages = []
+                st.rerun()
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STATE B: File uploaded → chat UI
+# ═══════════════════════════════════════════════════════════════════════════════
 else:
-    # Chat area
-    chat_container = st.container()
+    file_icon = "📄" if st.session_state.file_type == "pdf" else "🖼️"
+    size_kb   = round(len(st.session_state.file_bytes) / 1024, 1)
+    qa_count  = len(st.session_state.messages) // 2
 
-    with chat_container:
-        if not st.session_state.messages:
-            icon = "🖼️" if st.session_state.file_type == "image" else "📄"
-            st.markdown(f"""
-            <div style='text-align: center; padding: 40px 0; color: rgba(226,232,226,0.2);'>
-                <div style='font-size: 3rem; margin-bottom: 12px;'>{icon}</div>
-                <div style='font-size: 1.1rem; font-weight: 600;'>Ready to answer</div>
-                <div style='font-size: 0.85rem; margin-top: 4px;'>Ask anything about <span style='color: rgba(226,232,226,0.4);'>{st.session_state.uploaded_file}</span></div>
+    # File info bar + New File button
+    col_info, col_clear = st.columns([5, 1])
+    with col_info:
+        st.markdown(f"""
+        <div class='file-bar'>
+            <span style='font-size:1.5rem'>{file_icon}</span>
+            <div>
+                <div class='file-bar-name'>{st.session_state.uploaded_file}</div>
+                <div class='file-bar-meta'>
+                    {st.session_state.file_type.upper()} &nbsp;·&nbsp;
+                    {size_kb} KB &nbsp;·&nbsp;
+                    {qa_count} Q&amp;A pair{'s' if qa_count != 1 else ''}
+                </div>
             </div>
-            """, unsafe_allow_html=True)
-        else:
-            for msg in st.session_state.messages:
-                if msg["role"] == "user":
-                    st.markdown(f"""
-                    <div style='display: flex; justify-content: flex-end; margin: 8px 0;'>
-                        <div class='user-msg'>{msg['content']}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.markdown(f"""
-                    <div style='margin: 8px 0;'>
-                        <div class='ai-label'>✦ DocMind</div>
-                        <div class='ai-msg'>{msg['content']}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+        </div>
+        """, unsafe_allow_html=True)
+    with col_clear:
+        st.markdown("<div class='newfile-btn'>", unsafe_allow_html=True)
+        if st.button("🗑️ New File", use_container_width=True):
+            for k in ["messages", "uploaded_file", "file_type", "file_bytes", "file_mime"]:
+                st.session_state[k] = [] if k == "messages" else None
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("---")
+    # Image preview
+    if st.session_state.file_type == "image":
+        _, img_col, _ = st.columns([2, 1, 2])
+        with img_col:
+            img = Image.open(io.BytesIO(st.session_state.file_bytes))
+            st.image(img, use_container_width=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
-    # Input area
+    # Suggestion chips
+    sugg_list = SUGGESTIONS.get(st.session_state.file_type, [])
+    if sugg_list:
+        cols = st.columns(len(sugg_list))
+        for i, sugg in enumerate(sugg_list):
+            with cols[i]:
+                if st.button(sugg, key=f"sugg_{i}", use_container_width=True):
+                    st.session_state["pending_question"] = sugg
+                    st.rerun()
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    # Chat history
+    if not st.session_state.messages:
+        st.markdown(f"""
+        <div style='text-align:center; padding: 48px 0; color: rgba(226,232,226,0.18);'>
+            <div style='font-size: 3rem; margin-bottom: 12px;'>{file_icon}</div>
+            <div style='font-size: 1.05rem; font-weight: 600;'>Ready to answer</div>
+            <div style='font-size: 0.82rem; margin-top: 4px;'>
+                Ask anything about
+                <span style='color: rgba(226,232,226,0.35);'>{st.session_state.uploaded_file}</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        for msg in st.session_state.messages:
+            if msg["role"] == "user":
+                st.markdown(f"""
+                <div style='display:flex; justify-content:flex-end; margin: 8px 0;'>
+                    <div class='user-msg'>{msg['content']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div style='margin: 8px 0;'>
+                    <div class='ai-label'>✦ DocMind</div>
+                    <div class='ai-msg'>{msg['content']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    # Input row
     col_input, col_btn = st.columns([6, 1])
-
     with col_input:
         question = st.text_input(
-            "Ask a question",
+            "question",
             placeholder=f"Ask anything about your {st.session_state.file_type}…",
             label_visibility="collapsed",
             key="question_input",
         )
-
     with col_btn:
+        st.markdown("<div class='send-btn'>", unsafe_allow_html=True)
         send = st.button("Send ➤", use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    # Handle pending question from suggestion buttons
+    # Handle suggestion click
     if "pending_question" in st.session_state:
         question = st.session_state.pop("pending_question")
         send = True
@@ -558,7 +530,6 @@ else:
     # Process question
     if send and question and question.strip():
         st.session_state.messages.append({"role": "user", "content": question.strip()})
-
         with st.spinner("🤔 Thinking…"):
             try:
                 answer = answer_question(
@@ -569,8 +540,11 @@ else:
                 )
             except Exception as e:
                 answer = f"❌ Error: {str(e)}"
-
         st.session_state.messages.append({"role": "assistant", "content": answer})
         st.rerun()
 
-    st.markdown("<div style='text-align:center; color: rgba(255,255,255,0.1); font-size: 0.75rem; margin-top: 6px;'>Press Enter or click Send</div>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style='text-align:center; color:rgba(255,255,255,0.08); font-size:0.72rem; margin-top:6px;'>
+        Press Enter or click Send
+    </div>
+    """, unsafe_allow_html=True)
