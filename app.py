@@ -16,7 +16,7 @@ st.set_page_config(
 )
 
 # ── HF Token (hardcoded) ──────────────────────────────────────────────────────
-HF_TOKEN = "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"   # ← Replace with your actual token
+HF_TOKEN = "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"   # ← Replace with your actual token
 
 # ── API config ────────────────────────────────────────────────────────────────
 CHAT_URL   = "https://router.huggingface.co/v1/chat/completions"
@@ -548,3 +548,4 @@ else:
         Press Enter or click Send
     </div>
     """, unsafe_allow_html=True)
+
