@@ -16,7 +16,7 @@ st.set_page_config(
 )
 
 # ── HF Token (hardcoded) ──────────────────────────────────────────────────────
-HF_TOKEN = "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"   # ← Replace with your actual token
+HF_TOKEN = st.secrets["HF_TOKEN"]
 
 # ── API config ────────────────────────────────────────────────────────────────
 CHAT_URL   = "https://router.huggingface.co/v1/chat/completions"
@@ -372,9 +372,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# STATE A: No file → centered upload zone
-# ═══════════════════════════════════════════════════════════════════════════════
+
 if not st.session_state.uploaded_file:
 
     # Feature cards
@@ -426,9 +424,7 @@ if not st.session_state.uploaded_file:
                 st.session_state.messages = []
                 st.rerun()
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# STATE B: File uploaded → chat UI
-# ═══════════════════════════════════════════════════════════════════════════════
+
 else:
     file_icon = "📄" if st.session_state.file_type == "pdf" else "🖼️"
     size_kb   = round(len(st.session_state.file_bytes) / 1024, 1)
@@ -548,4 +544,5 @@ else:
         Press Enter or click Send
     </div>
     """, unsafe_allow_html=True)
+
 
