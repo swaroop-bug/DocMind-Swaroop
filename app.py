@@ -253,9 +253,18 @@ def extract_pdf_text(data: bytes) -> str:
     finally:
         os.unlink(path)
 
-def extract_excel_text(data: bytes) -> str:
+# Maps MIME types to the pandas Excel engine that handles them
+_EXCEL_ENGINES = {
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "openpyxl",  # .xlsx
+    "application/vnd.ms-excel": "xlrd",                                                # .xls
+    "application/vnd.ms-excel.sheet.binary.macroEnabled.12": "pyxlsb",                # .xlsb
+    "application/vnd.ms-excel.sheet.macroEnabled.12": "openpyxl",                     # .xlsm
+}
+
+def extract_excel_text(data: bytes, mime: str = "") -> str:
     """Read all sheets from an Excel file and convert to plain text."""
-    sheets = pd.read_excel(io.BytesIO(data), sheet_name=None)
+    engine = _EXCEL_ENGINES.get(mime)  # None → pandas auto-detect (safe fallback)
+    sheets = pd.read_excel(io.BytesIO(data), sheet_name=None, engine=engine)
     parts = []
     for sheet_name, df in sheets.items():
         df = df.dropna(how="all").fillna("")
@@ -340,7 +349,7 @@ def answer_question(file_bytes: bytes, file_type: str, mime: str, question: str)
 
     elif file_type == "excel":
         try:
-            doc_text = extract_excel_text(file_bytes)
+            doc_text = extract_excel_text(file_bytes, mime)
         except Exception as e:
             return f"❌ Could not read the Excel file: {e}"
         if not doc_text or len(doc_text) < 20:
@@ -465,21 +474,17 @@ if not st.session_state.uploaded_file:
 
         uploaded = st.file_uploader(
             "Upload file",
-            type=["pdf", "png", "jpg", "jpeg", "webp", "xlsx", "xls"],
+            type=["pdf", "png", "jpg", "jpeg", "webp", "xlsx", "xls", "xlsb", "xlsm"],
             label_visibility="collapsed",
         )
 
         if uploaded:
             mime = uploaded.type
-            EXCEL_MIMES = (
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                "application/vnd.ms-excel",
-            )
             if mime == "application/pdf":
                 ftype = "pdf"
             elif mime.startswith("image/"):
                 ftype = "image"
-            elif mime in EXCEL_MIMES or uploaded.name.lower().endswith((".xlsx", ".xls")):
+            elif mime in _EXCEL_ENGINES or uploaded.name.lower().endswith((".xlsx", ".xls", ".xlsb", ".xlsm")):
                 ftype = "excel"
             else:
                 ftype = None

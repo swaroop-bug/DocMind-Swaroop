@@ -4,3 +4,5 @@ pymupdf
 Pillow
 pandas
 openpyxl
+pyxlsb
+xlrd
