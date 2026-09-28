@@ -2,3 +2,5 @@ streamlit
 httpx
 pymupdf
 Pillow
+pandas
+openpyxl

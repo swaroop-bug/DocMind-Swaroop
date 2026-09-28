@@ -6,6 +6,7 @@ import os
 import time
 from PIL import Image
 import io
+import pandas as pd
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -47,6 +48,13 @@ SUGGESTIONS = {
         "📝 What text appears in this image?",
         "🎨 What colors and objects are visible?",
         "💡 What is the overall theme or mood?",
+    ],
+    "excel": [
+        "📊 Summarize the data in this spreadsheet",
+        "🔢 What are the column names and what do they mean?",
+        "📈 What trends or patterns do you see?",
+        "🏆 What are the highest and lowest values?",
+        "📋 How many rows and sheets does this file have?",
     ],
 }
 
@@ -245,6 +253,18 @@ def extract_pdf_text(data: bytes) -> str:
     finally:
         os.unlink(path)
 
+def extract_excel_text(data: bytes) -> str:
+    """Read all sheets from an Excel file and convert to plain text."""
+    sheets = pd.read_excel(io.BytesIO(data), sheet_name=None)
+    parts = []
+    for sheet_name, df in sheets.items():
+        df = df.dropna(how="all").fillna("")
+        parts.append(f"=== Sheet: {sheet_name} ===")
+        parts.append(f"Rows: {len(df)}  |  Columns: {list(df.columns)}")
+        parts.append(df.to_string(index=False))
+        parts.append("")
+    return "\n".join(parts).strip()
+
 def chunk_text(text: str, size=3500, overlap=200):
     chunks, i = [], 0
     while i < len(text):
@@ -317,7 +337,44 @@ def answer_question(file_bytes: bytes, file_type: str, mime: str, question: str)
             system="You are a helpful image analyst. Answer questions about images clearly and in detail.",
             user=f'The image shows: "{caption}"\n\nQuestion: {question}\n\nAnswer helpfully and in detail.',
         )
-    else:
+
+    elif file_type == "excel":
+        try:
+            doc_text = extract_excel_text(file_bytes)
+        except Exception as e:
+            return f"❌ Could not read the Excel file: {e}"
+        if not doc_text or len(doc_text) < 20:
+            return "❌ The spreadsheet appears to be empty or unreadable."
+
+        context_snippet = doc_text[:4000]
+        chunks = chunk_text(doc_text)
+        best_ans, best_score = "", -1.0
+        for chunk in chunks[:6]:
+            try:
+                res = call_qa(question, chunk)
+                if res.get("score", 0) > best_score:
+                    best_score = res.get("score", 0)
+                    best_ans = res.get("answer", "")
+            except Exception:
+                continue
+
+        if best_ans and best_score > 0.05:
+            user_msg = (
+                f"A Q&A system found this snippet: '{best_ans}' for the question: '{question}'.\n\n"
+                f"Using the spreadsheet data below, give a complete and accurate answer:\n\n{context_snippet}"
+            )
+        else:
+            user_msg = (
+                f"Here is data from a spreadsheet:\n\n{context_snippet}\n\n"
+                f"Question: {question}\n\n"
+                f"Answer clearly and accurately using the data above. Use bullet points or a table if helpful."
+            )
+        return call_chat(
+            system="You are an expert data analyst. Answer questions about spreadsheet data precisely. Use bullet points or tables where helpful.",
+            user=user_msg,
+        )
+
+    else:  # pdf
         doc_text = extract_pdf_text(file_bytes)
         if not doc_text or len(doc_text) < 50:
             return "❌ No readable text found. This PDF may be a scanned image-only file."
@@ -402,19 +459,30 @@ if not st.session_state.uploaded_file:
         <div class='upload-zone'>
             <span class='upload-icon'>⬆️</span>
             <div class='upload-title'>Drop your file here</div>
-            <div class='upload-sub'>Supports PDF · PNG · JPG · WEBP</div>
+            <div class='upload-sub'>Supports PDF · PNG · JPG · WEBP · XLSX · XLS</div>
         </div>
         """, unsafe_allow_html=True)
 
         uploaded = st.file_uploader(
             "Upload file",
-            type=["pdf", "png", "jpg", "jpeg", "webp"],
+            type=["pdf", "png", "jpg", "jpeg", "webp", "xlsx", "xls"],
             label_visibility="collapsed",
         )
 
         if uploaded:
             mime = uploaded.type
-            ftype = "pdf" if mime == "application/pdf" else ("image" if mime.startswith("image/") else None)
+            EXCEL_MIMES = (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "application/vnd.ms-excel",
+            )
+            if mime == "application/pdf":
+                ftype = "pdf"
+            elif mime.startswith("image/"):
+                ftype = "image"
+            elif mime in EXCEL_MIMES or uploaded.name.lower().endswith((".xlsx", ".xls")):
+                ftype = "excel"
+            else:
+                ftype = None
             if ftype:
                 st.session_state.uploaded_file = uploaded.name
                 st.session_state.file_type = ftype
@@ -425,7 +493,7 @@ if not st.session_state.uploaded_file:
 
 
 else:
-    file_icon = "📄" if st.session_state.file_type == "pdf" else "🖼️"
+    file_icon = "📄" if st.session_state.file_type == "pdf" else ("📊" if st.session_state.file_type == "excel" else "🖼️")
     size_kb   = round(len(st.session_state.file_bytes) / 1024, 1)
     qa_count  = len(st.session_state.messages) // 2
 
