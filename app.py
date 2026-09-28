@@ -20,11 +20,10 @@ HF_TOKEN = st.secrets["HF_TOKEN"]
 
 # ── API config ────────────────────────────────────────────────────────────────
 CHAT_URL   = "https://router.huggingface.co/v1/chat/completions"
-CHAT_MODEL = "meta-llama/Llama-3.1-8B-Instruct:cerebras"
+CHAT_MODEL = "meta-llama/Llama-3.1-8B-Instruct:novita"
 CHAT_FALLBACKS = [
-    "meta-llama/Llama-3.1-8B-Instruct:groq",
-    "meta-llama/Llama-3.1-8B-Instruct:together",
-    "meta-llama/Llama-3.1-8B-Instruct:fireworks-ai",
+    "meta-llama/Llama-3.1-8B-Instruct:deepinfra",
+    "meta-llama/Llama-3.1-8B-Instruct:nscale",
 ]
 QA_URL     = "https://router.huggingface.co/hf-inference/models/deepset/roberta-base-squad2"
 VISION_URL = "https://router.huggingface.co/hf-inference/models/Salesforce/blip-image-captioning-large"
