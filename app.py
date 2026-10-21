@@ -16,23 +16,39 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ── HF Token (hardcoded) ──────────────────────────────────────────────────────
-HF_TOKEN = st.secrets["HF_TOKEN"]
+# ── API credentials & Provider Detection ──────────────────────────────────────
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+HF_TOKEN = st.secrets.get("HF_TOKEN", "")
 
 # ── API config ────────────────────────────────────────────────────────────────
-CHAT_URL   = "https://router.huggingface.co/v1/chat/completions"
-CHAT_MODEL = "meta-llama/Llama-3.1-8B-Instruct:novita"
-CHAT_FALLBACKS = [
-    "meta-llama/Llama-3.1-8B-Instruct:deepinfra",
-    "meta-llama/Llama-3.1-8B-Instruct:nscale",
-]
+if GROQ_API_KEY:
+    PROVIDER = "groq"
+    CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
+    CHAT_MODEL = "qwen/qwen3.8-27b"
+    CHAT_FALLBACKS = [
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+    ]
+    JSON_HEADERS = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+else:
+    PROVIDER = "hf"
+    CHAT_URL = "https://router.huggingface.co/v1/chat/completions"
+    CHAT_MODEL = "meta-llama/Llama-3.1-8B-Instruct:novita"
+    CHAT_FALLBACKS = [
+        "meta-llama/Llama-3.1-8B-Instruct:deepinfra",
+        "meta-llama/Llama-3.1-8B-Instruct:nscale",
+        "meta-llama/Llama-3.1-8B-Instruct",
+    ]
+    JSON_HEADERS = {
+        "Authorization": f"Bearer {HF_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
 QA_URL     = "https://router.huggingface.co/hf-inference/models/deepset/roberta-base-squad2"
 VISION_URL = "https://router.huggingface.co/hf-inference/models/Salesforce/blip-image-captioning-large"
-
-JSON_HEADERS = {
-    "Authorization": f"Bearer {HF_TOKEN}",
-    "Content-Type": "application/json",
-}
 
 SUGGESTIONS = {
     "pdf": [
@@ -283,42 +299,72 @@ def chunk_text(text: str, size=3500, overlap=200):
 
 def call_chat(system: str, user: str) -> str:
     models = [CHAT_MODEL] + CHAT_FALLBACKS
-    last_error = ""
+    errors = []
+    payload = {
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user",   "content": user},
+        ],
+        "max_tokens": 1024,
+        "temperature": 0.4,
+        "stream": False,
+    }
     with httpx.Client(timeout=60) as client:
         for model in models:
-            try:
-                r = client.post(CHAT_URL, headers=JSON_HEADERS, json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user",   "content": user},
-                    ],
-                    "max_tokens": 512,
-                    "temperature": 0.4,
-                    "stream": False,
-                })
-                if r.status_code in (503, 404) or len(r.content) == 0:
-                    last_error = f"{model} unavailable"
-                    continue
-                if not r.is_success:
-                    last_error = f"{model} error {r.status_code}"
-                    continue
-                return r.json()["choices"][0]["message"]["content"].strip()
-            except Exception as e:
-                last_error = str(e)
-    raise ValueError(f"All models failed. Last: {last_error}")
+            for attempt in range(2):  # retry once per model
+                try:
+                    r = client.post(CHAT_URL, headers=JSON_HEADERS,
+                                    json={**payload, "model": model})
+                    # Rate-limited: back off and retry
+                    if r.status_code == 429:
+                        time.sleep(5)
+                        continue
+                    # Clearly unavailable providers — try next model immediately
+                    if r.status_code in (503, 404):
+                        errors.append(f"{model}: {r.status_code} unavailable")
+                        break
+                    # Empty body
+                    if not r.content:
+                        errors.append(f"{model}: empty response")
+                        break
+                    # Any other non-success: capture body for debugging
+                    if not r.is_success:
+                        try:
+                            body = r.json()
+                            msg = body.get("error", {}).get("message", r.text[:200])
+                        except Exception:
+                            msg = r.text[:200]
+                        errors.append(f"{model}: HTTP {r.status_code} — {msg}")
+                        break
+                    # Success
+                    data = r.json()
+                    msg = data["choices"][0]["message"]
+                    content = msg.get("content") or msg.get("reasoning") or ""
+                    if content.strip():
+                        return content.strip()
+                    errors.append(f"{model}: empty content generated")
+                    break
+                except httpx.TimeoutException:
+                    errors.append(f"{model}: timeout")
+                    break
+                except Exception as e:
+                    errors.append(f"{model}: {e}")
+                    break
+    raise ValueError("All models failed.\n" + "\n".join(errors))
 
 def call_qa(question: str, context: str) -> dict:
-    with httpx.Client(timeout=45) as client:
-        for _ in range(3):
-            r = client.post(QA_URL, headers=JSON_HEADERS, json={
+    if not HF_TOKEN:
+        return {"answer": "", "score": 0}
+    hf_headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
+    try:
+        with httpx.Client(timeout=8) as client:
+            r = client.post(QA_URL, headers=hf_headers, json={
                 "inputs": {"question": question, "context": context}
             })
-            if r.status_code == 503:
-                time.sleep(10)
-                continue
             if r.is_success:
                 return r.json()
+    except Exception:
+        pass
     return {"answer": "", "score": 0}
 
 def call_vision(image_bytes: bytes, mime: str) -> str:
@@ -337,8 +383,8 @@ def call_vision(image_bytes: bytes, mime: str) -> str:
     return "an uploaded image"
 
 def answer_question(file_bytes: bytes, file_type: str, mime: str, question: str) -> str:
-    if not HF_TOKEN or HF_TOKEN == "your_huggingface_token_here":
-        return "⚠️ Please replace `your_huggingface_token_here` in app.py with your actual Hugging Face token."
+    if not GROQ_API_KEY and (not HF_TOKEN or HF_TOKEN.startswith("your_")):
+        return "⚠️ Please add `GROQ_API_KEY` (free from console.groq.com/keys) or a funded `HF_TOKEN` in secrets.toml."
 
     if file_type == "image":
         caption = call_vision(file_bytes, mime)
